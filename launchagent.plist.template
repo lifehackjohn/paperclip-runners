@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS LaunchAgent template for a Paperclip runner.
+
+  1. Copy this file to ~/Library/LaunchAgents/ing.paperclip.my-runner.plist
+  2. Replace all placeholders (REPLACE_WITH_...) with your actual values
+  3. Load with: launchctl load ~/Library/LaunchAgents/ing.paperclip.my-runner.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PAPERCLIP_API_KEY</key>
+		<string>REPLACE_WITH_YOUR_PAPERCLIP_API_KEY</string>
+		<key>PAPERCLIP_API_URL</key>
+		<string>http://localhost:3100</string>
+		<key>OLLAMA_URL</key>
+		<string>http://localhost:11434</string>
+		<key>OLLAMA_MODEL</key>
+		<string>llama3.2</string>
+		<!-- Optional: only needed for oMLX / LM Studio / other authenticated endpoints -->
+		<!-- <key>OLLAMA_API_KEY</key> -->
+		<!-- <string>REPLACE_WITH_YOUR_LLM_API_KEY</string> -->
+		<!-- Optional: remove these if you are not using Mem0 -->
+		<key>MEM0_URL</key>
+		<string>http://localhost:8050</string>
+		<key>MEM0_USER_ID</key>
+		<string>my-agent</string>
+		<key>RUNNER_PORT</key>
+		<string>6200</string>
+		<key>HOME</key>
+		<string>REPLACE_WITH_YOUR_HOME_DIR</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+	<key>KeepAlive</key>
+	<true/>
+	<key>Label</key>
+	<string>ing.paperclip.my-runner</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>REPLACE_WITH_PATH_TO_VENV/bin/uvicorn</string>
+		<string>runner:app</string>
+		<string>--host</string>
+		<string>0.0.0.0</string>
+		<string>--port</string>
+		<string>6200</string>
+		<string>--log-level</string>
+		<string>info</string>
+		<string>--app-dir</string>
+		<string>REPLACE_WITH_DIR_CONTAINING_RUNNER_PY</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>REPLACE_WITH_YOUR_HOME_DIR/my-runner.log</string>
+	<key>StandardOutPath</key>
+	<string>REPLACE_WITH_YOUR_HOME_DIR/my-runner.log</string>
+	<key>WorkingDirectory</key>
+	<string>REPLACE_WITH_DIR_CONTAINING_RUNNER_PY</string>
+</dict>
+</plist>

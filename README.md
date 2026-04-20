@@ -104,6 +104,24 @@ If a Paperclip project has a workspace with a local `cwd` path, the runner reads
 
 Memories are searched before each response and saved after. The `MEM0_USER_ID` namespaces memories per agent.
 
+## Example Agents
+
+The `agents/` directory contains ready-to-use agent configurations. Each subfolder includes a system prompt, environment config template, and setup README.
+
+| Agent | Role | Toolsets | Port |
+|-------|------|----------|------|
+| [ani](agents/ani/) | Personal companion | `terminal,file,web,browser` | 6123 |
+| [lex](agents/lex/) | Legal expert & counsel | `terminal,file,web,browser` | 6124 |
+| [ada](agents/ada/) | Infrastructure monitoring | `terminal,file` | 6125 |
+
+To add your own agent:
+
+1. Create a folder under `agents/your-agent-name/`
+2. Copy `runner.py` → `agents/your-agent-name/your-agent-runner.py`
+3. Write your system prompt in `system-prompt.md`
+4. Copy `config.env.example`, set your values
+5. Register in Paperclip with adapter type `http`
+
 ## Customization
 
 The runner is intentionally minimal and easy to extend:

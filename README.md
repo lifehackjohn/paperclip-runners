@@ -90,19 +90,23 @@ tail -f ~/my-runner.log
 
 ## Architecture Notes
 
-### OpenAI-compatible vs. legacy Ollama
+### OpenAI-compatible vs. native Ollama
 
-The runner auto-detects which format to use based on the `OLLAMA_URL`:
-- If it contains `/v1` → uses OpenAI-compatible `/chat/completions` endpoint (works with oMLX, LM Studio, vLLM, etc.)
+The runner auto-detects which format to use based on `OLLAMA_URL`:
+- If it contains `/v1` → uses OpenAI-compatible `/chat/completions` (works with oMLX, LM Studio, vLLM, etc.)
 - Otherwise → uses the native Ollama `/api/chat` endpoint
+
+### Issue documents
+
+Before generating a response, the runner fetches all documents attached to the issue via `/api/issues/{id}/documents`. Plans, briefs, and other structured docs are automatically included in the prompt — no extra wiring needed.
 
 ### Workspace files
 
-If a Paperclip project has a workspace with a local `cwd` path, the runner reads text files from that directory and includes them in the prompt. Supported extensions are configurable.
+If a Paperclip project has a workspace with a local `cwd` path, the runner recursively reads text files from that directory and subdirectories. Supported extensions: `.txt`, `.md`, `.csv`, `.json`, `.yaml`, `.yml`, `.html`. Extend `text_extensions` in `read_workspace_files()` for other formats.
 
 ### Memory (Mem0)
 
-Memories are searched before each response and saved after. The `MEM0_USER_ID` namespaces memories per agent.
+Memories are searched before each response and saved after in a background thread (fire-and-forget — never blocks the heartbeat response). The `MEM0_USER_ID` namespaces memories per agent.
 
 ## Example Agents
 
@@ -129,10 +133,11 @@ The runner is intentionally minimal and easy to extend:
 | What to change | Where |
 |---|---|
 | Agent persona | `SYSTEM_PROMPT` constant |
-| LLM parameters (temperature, max tokens) | `ollama_chat()` function |
+| LLM parameters (temperature, max tokens) | `llm_chat()` function |
 | Which file types to read | `text_extensions` in `read_workspace_files()` |
+| Workspace file size budget | `max_total_chars` in `read_workspace_files()` |
 | Memory search limit | `mem0_search()` call in `handle_heartbeat()` |
-| Conversation history window | `conversation_history[-10:]` slice |
+| Conversation history window | `conversation_history[-20:]` slice |
 
 ## License
 

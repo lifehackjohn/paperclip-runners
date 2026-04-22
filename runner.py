@@ -10,11 +10,12 @@ Paperclip's http adapter POSTs:
 
 This runner:
 1. Reads the assigned issue + comments from the Paperclip API
-2. Searches Mem0 for relevant past memories  (optional)
-3. Reads workspace files if a project workspace is attached
-4. Builds a prompt and generates a response via the LLM
-5. Posts the response back to Paperclip as a comment
-6. Saves the conversation to Mem0
+2. Reads attached issue documents (plans, briefs, etc.)
+3. Searches Mem0 for relevant past memories (optional)
+4. Reads workspace files if a project workspace is attached
+5. Builds a prompt and generates a response via the LLM
+6. Posts the response back to Paperclip as a comment
+7. Saves the conversation to Mem0 (fire-and-forget, never blocks)
 
 Quickstart:
   pip install -r requirements.txt
@@ -24,8 +25,9 @@ Quickstart:
 import json
 import logging
 import os
+import re
+import threading
 import urllib.request
-import urllib.error
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
@@ -74,13 +76,13 @@ def http_get(url: str, api_key: str = "") -> Any:
         return json.loads(resp.read().decode())
 
 
-def http_post(url: str, payload: dict, api_key: str = "") -> Any:
+def http_post(url: str, payload: dict, api_key: str = "", timeout: int = 60) -> Any:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
     if api_key:
         req.add_header("Authorization", f"Bearer {api_key}")
-    with urllib.request.urlopen(req, timeout=60) as resp:
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode())
 
 
@@ -101,17 +103,25 @@ def mem0_search(query: str, user_id: str = MEM0_USER_ID, limit: int = 8) -> list
 
 
 def mem0_add(messages: list, user_id: str = MEM0_USER_ID) -> None:
-    """Save a conversation turn to Mem0. Silent no-op if Mem0 is unavailable."""
-    try:
-        http_post(f"{MEM0_URL}/v1/memories/", {
-            "messages": messages,
-            "user_id": user_id,
-        })
-    except Exception as e:
-        logger.debug(f"Mem0 add skipped: {e}")
+    """Fire-and-forget: save to Mem0 without blocking the heartbeat response."""
+    def _add():
+        try:
+            http_post(f"{MEM0_URL}/v1/memories/", {
+                "messages": messages,
+                "user_id": user_id,
+            }, timeout=300)
+        except Exception as e:
+            logger.debug(f"Mem0 add skipped: {e}")
+    threading.Thread(target=_add, daemon=True).start()
 
 
 # ── LLM helpers ───────────────────────────────────────────────────────────────
+
+def strip_thinking(text: str) -> str:
+    """Strip <think>...</think> blocks emitted by some reasoning models."""
+    text = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL)
+    return text.strip()
+
 
 def llm_chat(messages: list, model: str = OLLAMA_MODEL) -> str:
     """
@@ -126,7 +136,7 @@ def llm_chat(messages: list, model: str = OLLAMA_MODEL) -> str:
         payload = {
             "model": model,
             "messages": messages,
-            "max_tokens": 1024,
+            "max_tokens": 2048,
             "temperature": 0.7,
         }
         req = urllib.request.Request(
@@ -139,7 +149,7 @@ def llm_chat(messages: list, model: str = OLLAMA_MODEL) -> str:
             req.add_header("Authorization", f"Bearer {OLLAMA_API_KEY}")
         with urllib.request.urlopen(req, timeout=300) as resp:
             result = json.loads(resp.read().decode())
-        return result["choices"][0]["message"]["content"].strip()
+        return strip_thinking(result["choices"][0]["message"]["content"].strip())
 
     else:
         # Native Ollama path
@@ -147,7 +157,7 @@ def llm_chat(messages: list, model: str = OLLAMA_MODEL) -> str:
             "model": model,
             "messages": messages,
             "stream": False,
-            "options": {"temperature": 0.7, "num_predict": 1024, "num_ctx": 16384},
+            "options": {"temperature": 0.7, "num_predict": 2048, "num_ctx": 32768},
         }
         req = urllib.request.Request(
             f"{base_url}/api/chat",
@@ -157,15 +167,15 @@ def llm_chat(messages: list, model: str = OLLAMA_MODEL) -> str:
         req.add_header("Content-Type", "application/json")
         with urllib.request.urlopen(req, timeout=300) as resp:
             result = json.loads(resp.read().decode())
-        return result.get("message", {}).get("content", "").strip()
+        return strip_thinking(result.get("message", {}).get("content", "").strip())
 
 
 # ── Workspace file reader ──────────────────────────────────────────────────────
 
-def read_workspace_files(cwd: str, max_total_chars: int = 30000) -> str:
+def read_workspace_files(cwd: str, max_total_chars: int = 80000) -> str:
     """
-    Read text files from a Paperclip project workspace directory.
-    Returns a formatted string for inclusion in the LLM prompt.
+    Read text files from a Paperclip project workspace directory, including
+    subdirectories. Returns a formatted string for inclusion in the LLM prompt.
     """
     import pathlib
     workspace_path = pathlib.Path(cwd)
@@ -173,22 +183,25 @@ def read_workspace_files(cwd: str, max_total_chars: int = 30000) -> str:
         return ""
 
     # Extend this set to include other formats your agent needs
-    text_extensions = {".txt", ".md", ".rtf", ".text", ".csv"}
+    text_extensions = {".txt", ".md", ".rtf", ".text", ".csv", ".json", ".yaml", ".yml", ".html"}
     files_content = []
     total_chars = 0
 
-    for f in sorted(workspace_path.iterdir()):
+    for f in sorted(workspace_path.rglob("*")):
         if not f.is_file() or f.suffix.lower() not in text_extensions:
             continue
+        if any(part.startswith(".") for part in f.parts):
+            continue
         try:
-            content = f.read_text(encoding="utf-8", errors="replace")
+            content  = f.read_text(encoding="utf-8", errors="replace")
+            rel_path = f.relative_to(workspace_path)
             if total_chars + len(content) > max_total_chars:
                 remaining = max_total_chars - total_chars
                 if remaining > 500:
                     content = content[:remaining] + "\n\n[... truncated ...]"
-                else:
-                    break
-            files_content.append(f"### {f.name}\n\n{content}")
+                    files_content.append(f"### {rel_path}\n\n{content}")
+                break
+            files_content.append(f"### {rel_path}\n\n{content}")
             total_chars += len(content)
         except Exception as e:
             logger.warning(f"Failed to read {f}: {e}")
@@ -196,6 +209,29 @@ def read_workspace_files(cwd: str, max_total_chars: int = 30000) -> str:
     if not files_content:
         return ""
     return "## Project Files\n\n" + "\n\n---\n\n".join(files_content)
+
+
+def paperclip_get_issue_documents(issue_id: str, api_url: str, api_key: str) -> str:
+    """
+    Fetch all documents attached to a Paperclip issue (plans, briefs, etc.)
+    and return their combined text for inclusion in the LLM prompt.
+    """
+    try:
+        docs = http_get(f"{api_url}/api/issues/{issue_id}/documents", api_key)
+        if not isinstance(docs, list) or not docs:
+            return ""
+        parts = []
+        for doc in docs:
+            title = doc.get("title") or doc.get("key", "")
+            body  = doc.get("body", "")
+            if body:
+                parts.append(f"### Document: {title}\n\n{body}")
+        if not parts:
+            return ""
+        return "## Issue Documents\n\n" + "\n\n---\n\n".join(parts)
+    except Exception as e:
+        logger.debug(f"Issue documents fetch skipped: {e}")
+        return ""
 
 
 # ── Paperclip API helpers ─────────────────────────────────────────────────────
@@ -281,9 +317,16 @@ async def handle_heartbeat(body: dict) -> dict:
                     for ws in workspaces:
                         if ws.get("id") == project_workspace_id and ws.get("cwd"):
                             workspace_context = read_workspace_files(ws["cwd"])
+                            if workspace_context:
+                                logger.info(f"Read {len(workspace_context)} chars from workspace")
                             break
         except Exception as e:
             logger.warning(f"Failed to read workspace: {e}")
+
+    # ── Read issue documents (plans, briefs, etc.) ────────────────────────────
+    documents_context = paperclip_get_issue_documents(issue_id, api_url, api_key)
+    if documents_context:
+        logger.info(f"Read {len(documents_context)} chars from issue documents")
 
     # ── Build conversation history from comments ───────────────────────────────
     triggering_message = None
@@ -336,12 +379,14 @@ async def handle_heartbeat(body: dict) -> dict:
     system_content = SYSTEM_PROMPT
     if memory_context:
         system_content += f"\n\n{memory_context}"
+    if documents_context:
+        system_content += "\n\nThe following documents are attached to this task:\n\n" + documents_context
     if workspace_context:
         system_content += "\n\nThe following files are from the project workspace:\n\n" + workspace_context
 
     messages = [{"role": "system", "content": system_content}]
-    # Keep last 10 turns of conversation history to stay within context limits
-    messages.extend(conversation_history[-10:])
+    # Keep last 20 turns — enough for multi-step task continuity
+    messages.extend(conversation_history[-20:])
 
     # Ensure the last message is from the user
     if not messages or messages[-1]["role"] != "user":
@@ -386,14 +431,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Paperclip Runner",
     description="HTTP adapter runner bridging Paperclip heartbeats to a local LLM + Mem0",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "paperclip-runner", "version": "1.0.0"}
+    return {"status": "ok", "service": "paperclip-runner", "version": "1.1.0"}
 
 
 @app.post("/heartbeat")

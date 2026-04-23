@@ -114,9 +114,22 @@ The `agents/` directory contains ready-to-use agent configurations. Each subfold
 
 | Agent | Role | Toolsets | Port |
 |-------|------|----------|------|
-| [ani](agents/ani/) | Personal companion | `terminal,file,web,browser` | 6123 |
-| [lex](agents/lex/) | Legal expert & counsel | `terminal,file,web,browser` | 6124 |
+| [ani](agents/ani/) | UHNWI Navigator | `terminal,file,web,browser` | 6123 |
+| [lex](agents/lex/) | Legal & Compliance | `terminal,file,web,browser` | 6124 |
 | [ada](agents/ada/) | Infrastructure monitoring | `terminal,file` | 6125 |
+| [jarvis](agents/jarvis/) | Personal Assistant (WhatsApp) | `terminal,file,web` | 6126 |
+| [sage](agents/sage/) | Knowledge Manager (LifeOS vault) | headless, local-only | 6127 |
+
+## Chat UI
+
+A local web dashboard to chat with Lex, Ani, and Jarvis is in [`chat-ui/`](chat-ui/):
+
+```bash
+uvicorn chat-ui/gateway:app --host 0.0.0.0 --port 6100
+# → http://localhost:6100
+```
+
+See [`chat-ui/README.md`](chat-ui/README.md) for setup details.
 
 To add your own agent:
 

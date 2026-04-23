@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Sage Runner — macOS LaunchAgent
+
+  Setup:
+  1. Fill in REPLACE_WITH_* placeholders (API keys + venv path)
+  2. Copy to ~/Library/LaunchAgents/ing.paperclip.sage-runner.plist
+  3. Load:
+       launchctl load ~/Library/LaunchAgents/ing.paperclip.sage-runner.plist
+
+  Restart:
+       launchctl stop ing.paperclip.sage-runner
+       launchctl start ing.paperclip.sage-runner
+
+  Logs:
+       tail -f ~/sage-runner.log
+
+  Health check:
+       curl http://localhost:6127/health
+
+  Notes:
+  - Sage runs on oMLX (localhost:8000/v1) — no cloud inference.
+  - LifeOS vault must be accessible at /Volumes/Public/apps/LifeOS when the agent runs.
+  - Dual Mem0 namespaces: johannes (institutional) + sage (operational).
+  - Get API keys from Mission Control (http://localhost:3101).
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ing.paperclip.sage-runner</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- Paperclip -->
+		<key>PAPERCLIP_API_URL</key>
+		<string>http://localhost:3100</string>
+		<key>SAGE_PAPERCLIP_API_KEY</key>
+		<string>REPLACE_WITH_SAGE_PAPERCLIP_API_KEY</string>
+
+		<!-- oMLX — local inference, no cloud. Get API key from Mission Control (id: omlx) -->
+		<key>OMLX_URL</key>
+		<string>http://localhost:8000/v1</string>
+		<key>OMLX_MODEL</key>
+		<string>Qwen3.5-9B-mlx-lm-mxfp4</string>
+		<key>OMLX_API_KEY</key>
+		<string>REPLACE_WITH_OMLX_API_KEY</string>
+
+		<!-- mem0 — dual namespace -->
+		<key>MEM0_URL</key>
+		<string>http://localhost:8050</string>
+		<key>MEM0_INSTITUTIONAL_USER_ID</key>
+		<string>johannes</string>
+		<key>MEM0_OPERATIONAL_USER_ID</key>
+		<string>sage</string>
+
+		<!-- LifeOS vault path -->
+		<key>LIFEOS_VAULT_PATH</key>
+		<string>/Volumes/Public/apps/LifeOS</string>
+
+		<!-- Runner port -->
+		<key>SAGE_RUNNER_PORT</key>
+		<string>6127</string>
+
+		<!-- Environment -->
+		<key>HOME</key>
+		<string>/Users/hermes</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+
+	<key>ProgramArguments</key>
+	<array>
+		<!-- Point to the virtualenv uvicorn used by paperclip-runners -->
+		<string>REPLACE_WITH_VENV_PATH/bin/uvicorn</string>
+		<string>runner:app</string>
+		<string>--host</string>
+		<string>0.0.0.0</string>
+		<string>--port</string>
+		<string>6127</string>
+		<string>--log-level</string>
+		<string>info</string>
+		<string>--app-dir</string>
+		<string>/Users/hermes/.paperclip/instances/default/companies/f3437287-eeab-4ba5-b0f6-ccc30c555fdc/projects/paperclip-runners/agents/sage</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/hermes/.paperclip/instances/default/companies/f3437287-eeab-4ba5-b0f6-ccc30c555fdc/projects/paperclip-runners/agents/sage</string>
+
+	<key>RunAtLoad</key>
+	<true/>
+
+	<key>KeepAlive</key>
+	<true/>
+
+	<key>StandardOutPath</key>
+	<string>/Users/hermes/sage-runner.log</string>
+
+	<key>StandardErrorPath</key>
+	<string>/Users/hermes/sage-runner.log</string>
+</dict>
+</plist>

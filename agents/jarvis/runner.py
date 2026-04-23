@@ -55,8 +55,9 @@ OMLX_URL     = os.environ.get("OMLX_URL", "http://localhost:8000/v1")
 OMLX_API_KEY = os.environ.get("OMLX_API_KEY", "")
 OMLX_MODEL   = os.environ.get("OMLX_MODEL", "Qwen3.5-9B-mlx-lm-mxfp4")
 
-MEM0_URL     = os.environ.get("MEM0_URL", "http://localhost:8050")
-MEM0_USER_ID = os.environ.get("MEM0_USER_ID", "jarvis")
+MEM0_URL            = os.environ.get("MEM0_URL", "http://localhost:8050")
+MEM0_USER_ID        = os.environ.get("MEM0_USER_ID", "jarvis")
+MEM0_SHARED_USER_ID = os.environ.get("MEM0_SHARED_USER_ID", "johannes")
 
 # WhatsApp bridge
 BRIDGE_SCRIPT = os.environ.get(
@@ -399,14 +400,21 @@ async def route_whatsapp_message(msg: dict) -> None:
         _CHAT_HISTORY[chat_id] = history[-MAX_HISTORY_PER_CHAT:]
         history = _CHAT_HISTORY[chat_id]
 
-    # Mem0 search for relevant memories
+    # Mem0 search — agent-specific memories + shared johannes institutional knowledge
     memory_context = ""
     try:
-        memories = mem0_search(body)
-        if memories:
-            items = [m.get("memory", "") for m in memories if m.get("memory")]
-            if items:
-                memory_context = "Relevant memories:\n" + "\n".join(f"- {m}" for m in items[:5])
+        agent_memories  = mem0_search(body)
+        shared_memories = mem0_search(body, user_id=MEM0_SHARED_USER_ID)
+        seen: set = set()
+        all_memories: list = []
+        for m in agent_memories + shared_memories:
+            text = m.get("memory", "")
+            if text and text not in seen:
+                seen.add(text)
+                all_memories.append(m)
+        if all_memories:
+            items = [m.get("memory", "") for m in all_memories]
+            memory_context = "Relevant memories:\n" + "\n".join(f"- {m}" for m in items[:5])
     except Exception as e:
         logger.debug("Mem0 search error: %s", e)
 
@@ -592,13 +600,20 @@ async def handle_heartbeat(body: dict) -> dict:
         logger.info("No message to respond to")
         return {"status": "ok", "action": "skipped", "reason": "no_message"}
 
-    # Mem0 search
+    # Mem0 search — agent-specific memories + shared johannes institutional knowledge
     memory_context = ""
-    memories = mem0_search(triggering_message, user_id=mem0_uid)
-    if memories:
-        items = [m.get("memory", "") for m in memories if m.get("memory")]
-        if items:
-            memory_context = "Relevant memories:\n" + "\n".join(f"- {m}" for m in items[:6])
+    agent_memories  = mem0_search(triggering_message, user_id=mem0_uid)
+    shared_memories = mem0_search(triggering_message, user_id=MEM0_SHARED_USER_ID)
+    seen_hb: set = set()
+    all_memories_hb: list = []
+    for m in agent_memories + shared_memories:
+        text = m.get("memory", "")
+        if text and text not in seen_hb:
+            seen_hb.add(text)
+            all_memories_hb.append(m)
+    if all_memories_hb:
+        items = [m.get("memory", "") for m in all_memories_hb]
+        memory_context = "Relevant memories:\n" + "\n".join(f"- {m}" for m in items[:6])
 
     # System prompt for Paperclip (no WA formatting constraints)
     system_content = SYSTEM_PROMPT
@@ -765,6 +780,66 @@ async def whatsapp_send(request: Request):
         content={"status": "ok" if success else "error"},
         status_code=200 if success else 502,
     )
+
+
+@app.post("/chat")
+async def chat(request: Request):
+    """
+    Direct chat endpoint for the Runner Chat UI.
+    Accepts { message, history } and returns { response }.
+    Does not touch Paperclip or WhatsApp — pure LLM inference with optional Mem0.
+
+    history: list of { role: "user"|"assistant", content: str }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(content={"error": "invalid_json"}, status_code=400)
+
+    message = (body.get("message") or "").strip()
+    history = body.get("history") or []
+    model   = body.get("model") or OMLX_MODEL
+
+    if not message:
+        return JSONResponse(content={"error": "message_required"}, status_code=400)
+
+    # Search Mem0 for relevant memories (agent-specific + shared johannes)
+    memory_context = ""
+    agent_memories  = mem0_search(message)
+    shared_memories = mem0_search(message, user_id=MEM0_SHARED_USER_ID)
+    seen_chat: set = set()
+    all_chat_mem: list = []
+    for m in agent_memories + shared_memories:
+        text = m.get("memory", "")
+        if text and text not in seen_chat:
+            seen_chat.add(text)
+            all_chat_mem.append(m)
+    if all_chat_mem:
+        items = [m.get("memory", "") for m in all_chat_mem]
+        memory_context = "Relevant memories:\n" + "\n".join(f"- {m}" for m in items[:6])
+
+    system_content = SYSTEM_PROMPT
+    if memory_context:
+        system_content += f"\n\n{memory_context}"
+
+    messages = [{"role": "system", "content": system_content}]
+    messages.extend(history[-20:])
+    messages.append({"role": "user", "content": message})
+
+    try:
+        response = omlx_chat(messages, model=model)
+    except Exception as e:
+        logger.error("Chat LLM call failed: %s", e)
+        return JSONResponse(content={"error": f"llm_failed: {e}"}, status_code=500)
+
+    # Save to Mem0 in the background
+    mem0_add([
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": response},
+    ])
+
+    logger.info("Chat response (%d chars)", len(response))
+    return JSONResponse(content={"response": response})
 
 
 if __name__ == "__main__":

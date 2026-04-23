@@ -47,8 +47,9 @@ PAPERCLIP_API_KEY = os.environ.get("PAPERCLIP_API_KEY", "")
 OLLAMA_URL        = os.environ.get("OLLAMA_URL",  "http://localhost:11434")
 OLLAMA_MODEL      = os.environ.get("OLLAMA_MODEL", "llama3.2")
 OLLAMA_API_KEY    = os.environ.get("OLLAMA_API_KEY", "")   # required for oMLX/LM Studio
-MEM0_URL          = os.environ.get("MEM0_URL",  "http://localhost:8050")
-MEM0_USER_ID      = os.environ.get("MEM0_USER_ID", "my-agent")
+MEM0_URL             = os.environ.get("MEM0_URL",  "http://localhost:8050")
+MEM0_USER_ID         = os.environ.get("MEM0_USER_ID", "my-agent")
+MEM0_SHARED_USER_ID  = os.environ.get("MEM0_SHARED_USER_ID", "johannes")
 PORT              = int(os.environ.get("RUNNER_PORT", "6200"))
 
 
@@ -368,12 +369,21 @@ async def handle_heartbeat(body: dict) -> dict:
         return {"status": "ok", "action": "skipped", "reason": "no_message"}
 
     # ── Search Mem0 for relevant memories ─────────────────────────────────────
+    # Fetch agent-specific memories and shared johannes institutional knowledge
     memory_context = ""
-    memories = mem0_search(triggering_message, user_id=mem0_user)
-    if memories:
-        items = [m.get("memory", "") for m in memories if m.get("memory")]
-        if items:
-            memory_context = "Relevant memories:\n" + "\n".join(f"- {m}" for m in items[:6])
+    agent_memories  = mem0_search(triggering_message, user_id=mem0_user)
+    shared_memories = mem0_search(triggering_message, user_id=MEM0_SHARED_USER_ID)
+    # Merge, deduplicating by memory text
+    seen: set = set()
+    all_memories: list = []
+    for m in agent_memories + shared_memories:
+        text = m.get("memory", "")
+        if text and text not in seen:
+            seen.add(text)
+            all_memories.append(m)
+    if all_memories:
+        items = [m.get("memory", "") for m in all_memories]
+        memory_context = "Relevant memories:\n" + "\n".join(f"- {m}" for m in items[:6])
 
     # ── Build LLM messages ────────────────────────────────────────────────────
     system_content = SYSTEM_PROMPT
@@ -453,6 +463,67 @@ async def heartbeat(request: Request):
     except Exception as e:
         logger.error(f"Heartbeat handler error: {e}", exc_info=True)
         return JSONResponse(content={"status": "error", "reason": str(e)}, status_code=200)
+
+
+@app.post("/chat")
+async def chat(request: Request):
+    """
+    Direct chat endpoint for the Runner Chat UI.
+    Accepts { message, history } and returns { response }.
+    Does not touch Paperclip — pure LLM inference with optional Mem0.
+
+    history: list of { role: "user"|"assistant", content: str }
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse(content={"error": "invalid_json"}, status_code=400)
+
+    message  = (body.get("message") or "").strip()
+    history  = body.get("history") or []
+    model    = body.get("model") or OLLAMA_MODEL
+
+    if not message:
+        return JSONResponse(content={"error": "message_required"}, status_code=400)
+
+    # Search Mem0 for relevant memories (agent-specific + shared johannes)
+    memory_context = ""
+    agent_memories  = mem0_search(message)
+    shared_memories = mem0_search(message, user_id=MEM0_SHARED_USER_ID)
+    seen2: set = set()
+    all_chat_memories: list = []
+    for m in agent_memories + shared_memories:
+        text = m.get("memory", "")
+        if text and text not in seen2:
+            seen2.add(text)
+            all_chat_memories.append(m)
+    if all_chat_memories:
+        items = [m.get("memory", "") for m in all_chat_memories]
+        memory_context = "Relevant memories:\n" + "\n".join(f"- {m}" for m in items[:6])
+
+    system_content = SYSTEM_PROMPT
+    if memory_context:
+        system_content += f"\n\n{memory_context}"
+
+    messages = [{"role": "system", "content": system_content}]
+    # Include recent history (last 20 turns) then the new user message
+    messages.extend(history[-20:])
+    messages.append({"role": "user", "content": message})
+
+    try:
+        response = llm_chat(messages, model=model)
+    except Exception as e:
+        logger.error(f"Chat LLM call failed: {e}")
+        return JSONResponse(content={"error": f"llm_failed: {e}"}, status_code=500)
+
+    # Save to Mem0 in the background
+    mem0_add([
+        {"role": "user", "content": message},
+        {"role": "assistant", "content": response},
+    ])
+
+    logger.info(f"Chat response ({len(response)} chars)")
+    return JSONResponse(content={"response": response})
 
 
 if __name__ == "__main__":

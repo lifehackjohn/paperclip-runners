@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Jarvis Runner — macOS LaunchAgent
+
+  1. Fill in REPLACE_WITH_* placeholders (API keys)
+  2. Copy to ~/Library/LaunchAgents/ing.paperclip.jarvis-runner.plist
+  3. Load: launchctl load ~/Library/LaunchAgents/ing.paperclip.jarvis-runner.plist
+
+  Logs:
+    Runner: ~/jarvis-runner.log
+    Bridge: ~/.paperclip/runners/jarvis/bridge.log
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>ing.paperclip.jarvis-runner</string>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<!-- Paperclip -->
+		<key>PAPERCLIP_API_URL</key>
+		<string>http://localhost:3100</string>
+		<key>JARVIS_PAPERCLIP_API_KEY</key>
+		<string>REPLACE_WITH_JARVIS_PAPERCLIP_API_KEY</string>
+
+		<!-- oMLX — get API key from Mission Control (id: omlx) -->
+		<key>OMLX_URL</key>
+		<string>http://localhost:8000/v1</string>
+		<key>OMLX_MODEL</key>
+		<string>Qwen3.5-9B-mlx-lm-mxfp4</string>
+		<key>OMLX_API_KEY</key>
+		<string>REPLACE_WITH_OMLX_API_KEY</string>
+
+		<!-- mem0 -->
+		<key>MEM0_URL</key>
+		<string>http://localhost:8050</string>
+		<key>MEM0_USER_ID</key>
+		<string>jarvis</string>
+
+		<!-- WhatsApp bridge -->
+		<key>WHATSAPP_BRIDGE_SCRIPT</key>
+		<string>/Users/hermes/.hermes/hermes-agent/scripts/whatsapp-bridge/bridge.js</string>
+		<key>WHATSAPP_BRIDGE_PORT</key>
+		<string>3001</string>
+		<key>WHATSAPP_SESSION_DIR</key>
+		<string>/Users/hermes/.paperclip/runners/jarvis/whatsapp-session</string>
+		<key>WHATSAPP_MODE</key>
+		<string>self-chat</string>
+		<key>WHATSAPP_REPLY_PREFIX</key>
+		<string></string>
+
+		<!-- Runner port -->
+		<key>JARVIS_RUNNER_PORT</key>
+		<string>6126</string>
+
+		<!-- Environment -->
+		<key>HOME</key>
+		<string>/Users/hermes</string>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+	</dict>
+
+	<key>ProgramArguments</key>
+	<array>
+		<!-- Point to the virtualenv uvicorn used by paperclip-runners -->
+		<string>REPLACE_WITH_VENV_PATH/bin/uvicorn</string>
+		<string>runner:app</string>
+		<string>--host</string>
+		<string>0.0.0.0</string>
+		<string>--port</string>
+		<string>6126</string>
+		<string>--log-level</string>
+		<string>info</string>
+		<string>--app-dir</string>
+		<string>/Users/hermes/.paperclip/instances/default/companies/f3437287-eeab-4ba5-b0f6-ccc30c555fdc/projects/paperclip-runners/agents/jarvis</string>
+	</array>
+
+	<key>WorkingDirectory</key>
+	<string>/Users/hermes/.paperclip/instances/default/companies/f3437287-eeab-4ba5-b0f6-ccc30c555fdc/projects/paperclip-runners/agents/jarvis</string>
+
+	<key>RunAtLoad</key>
+	<true/>
+
+	<key>KeepAlive</key>
+	<true/>
+
+	<key>StandardOutPath</key>
+	<string>/Users/hermes/jarvis-runner.log</string>
+
+	<key>StandardErrorPath</key>
+	<string>/Users/hermes/jarvis-runner.log</string>
+</dict>
+</plist>
